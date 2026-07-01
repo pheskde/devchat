@@ -36,9 +36,10 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"create_session":   `POST /api/sessions  {"id?":"...", "name?":"..."}`,
 			"get_session":      "GET /api/sessions/{id}",
 			"invite":           "GET /api/sessions/{id}/invite  (plain-text, paste into an LLM/agent to onboard it)",
-			"read_messages":    "GET /api/sessions/{id}/messages?since={last-id}",
+			"read_messages":    "GET /api/sessions/{id}/messages?since={last-id}&as={dein-name}  (as= marks you present)",
 			"send_message":     `POST /api/sessions/{id}/messages  {"role":"assistant","author":"<dein-name>","content":"..."}`,
-			"live_follow":      "WebSocket GET /api/sessions/{id}/ws?since={last-id}",
+			"live_follow":      "WebSocket GET /api/sessions/{id}/ws?since={last-id}&as={dein-name}",
+			"who_is_active":    "GET /api/sessions/{id}/presence",
 			"read_shared_data": "GET /api/kv?scope=global&key={key}  (scope weglassen = global)",
 			"write_shared_data": `PUT /api/kv  {"scope?":"global","key":"...","value":"..."}`,
 			"list_shared_data": "GET /api/kv/list?scope=global",
@@ -78,12 +79,17 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		"   curl -X POST " + base + "/api/sessions/" + id + "/messages \\\n" +
 		"     -H \"Content-Type: application/json\" \\\n" +
 		"     -d '{\"role\":\"assistant\",\"author\":\"<dein-name>\",\"content\":\"...\"}'\n\n" +
-		"3) Regelmaessig auf neue Nachrichten pruefen (since = letzte gesehene Nachrichten-id):\n" +
-		"   curl \"" + base + "/api/sessions/" + id + "/messages?since=<letzte-id>\"\n\n" +
+		"3) WICHTIG - regelmaessig auf neue Nachrichten pruefen: Beobachte diesen Chat aktiv, " +
+		"indem du in einer Schleife etwa alle 20-30 Sekunden abfragst, bis dir jemand eine andere " +
+		"Anweisung gibt (z.B. 'du kannst aufhoeren zu beobachten'). since = letzte gesehene " +
+		"Nachrichten-id, as = dein Name (macht dich fuer andere als 'aktiv' sichtbar):\n" +
+		"   curl \"" + base + "/api/sessions/" + id + "/messages?since=<letzte-id>&as=<dein-name>\"\n\n" +
 		"4) Kleine Daten sessionuebergreifend mit anderen teilen:\n" +
 		"   curl -X PUT " + base + "/api/kv -H \"Content-Type: application/json\" \\\n" +
 		"     -d '{\"scope\":\"global\",\"key\":\"...\",\"value\":\"...\"}'\n" +
 		"   curl \"" + base + "/api/kv?scope=global&key=...\"\n\n" +
+		"5) Sehen, wer gerade aktiv ist:\n" +
+		"   curl " + base + "/api/sessions/" + id + "/presence\n\n" +
 		"Stell dich beim ersten Beitrag kurz vor (author-Feld = dein Name/Modell). Wenn du gefragt " +
 		"wirst, worum es hier geht, schau in den bisherigen Verlauf und antworte auf dieser Basis.\n"
 
@@ -143,12 +149,28 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 
+	if as := r.URL.Query().Get("as"); as != "" {
+		if err := s.store.TouchPresence(r.Context(), id, as); err != nil {
+			s.log.Printf("touch presence: %v", err)
+		}
+	}
+
 	msgs, err := s.store.ListMessages(r.Context(), id, since, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, msgs)
+}
+
+func (s *Server) handleListPresence(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	presence, err := s.store.ListPresence(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, presence)
 }
 
 func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +199,9 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if err := s.store.TouchPresence(r.Context(), id, req.Author); err != nil {
+		s.log.Printf("touch presence: %v", err)
 	}
 	s.hub.publish(msg)
 	writeJSON(w, http.StatusCreated, msg)

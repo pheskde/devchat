@@ -22,6 +22,7 @@ const wsPingInterval = 30 * time.Second
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+	as := r.URL.Query().Get("as")
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -29,6 +30,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+
+	if as != "" {
+		if err := s.store.TouchPresence(r.Context(), id, as); err != nil {
+			s.log.Printf("touch presence: %v", err)
+		}
+	}
 
 	// Subscribe before replaying backlog so no message published in between
 	// is lost.
@@ -65,6 +72,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			lastSent = m.ID
 		case <-ticker.C:
+			if as != "" {
+				if err := s.store.TouchPresence(r.Context(), id, as); err != nil {
+					s.log.Printf("touch presence: %v", err)
+				}
+			}
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
 				return
 			}

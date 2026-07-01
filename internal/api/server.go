@@ -44,6 +44,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions/{id}/messages", s.handleListMessages)
 	s.mux.HandleFunc("POST /api/sessions/{id}/messages", s.handlePostMessage)
 	s.mux.HandleFunc("GET /api/sessions/{id}/ws", s.handleWS)
+	s.mux.HandleFunc("GET /api/sessions/{id}/presence", s.handleListPresence)
 
 	s.mux.HandleFunc("GET /api/kv", s.handleGetKV)
 	s.mux.HandleFunc("PUT /api/kv", s.handlePutKV)

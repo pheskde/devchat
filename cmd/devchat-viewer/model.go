@@ -7,6 +7,7 @@ import (
 
 	"github.com/pheskde/devchat/internal/store"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -29,6 +30,9 @@ var (
 				Bold(true)
 
 	itemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+
+	presenceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("112"))
+	presenceDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -65,11 +69,18 @@ type inviteLoadedMsg struct {
 	err  error
 }
 
+type presenceLoadedMsg struct {
+	sessionID string
+	presence  []store.Presence
+	err       error
+}
+
 type model struct {
-	cl      *client
-	width   int
-	height  int
-	ready   bool
+	cl         *client
+	viewerName string
+	width      int
+	height     int
+	ready      bool
 
 	sessions    []store.Session
 	selectedIdx int
@@ -81,6 +92,8 @@ type model struct {
 	watchStop chan struct{}
 	watchCh   <-chan store.Message
 
+	presence []store.Presence
+
 	statusMsg string
 	err       error
 
@@ -88,8 +101,8 @@ type model struct {
 	inviteText string
 }
 
-func newModel(cl *client) model {
-	return model{cl: cl, vp: viewport.New(0, 0)}
+func newModel(cl *client, viewerName string) model {
+	return model{cl: cl, viewerName: viewerName, vp: viewport.New(0, 0)}
 }
 
 func (m model) Init() tea.Cmd {
@@ -114,6 +127,13 @@ func fetchInviteCmd(cl *client, sessionID string) tea.Cmd {
 	}
 }
 
+func fetchPresenceCmd(cl *client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		presence, err := cl.listPresence(sessionID)
+		return presenceLoadedMsg{sessionID: sessionID, presence: presence, err: err}
+	}
+}
+
 // waitForWS returns a Cmd that blocks for the next message on ch and wraps
 // it tagged with watchID, so stale events from a since-replaced watcher can
 // be told apart from the current one.
@@ -132,22 +152,17 @@ func (m *model) switchSession(id string) tea.Cmd {
 	m.watchStop = make(chan struct{})
 	m.messages = nil
 	m.vp.SetContent("")
-	m.watchCh = m.cl.watchSession(id, 0, m.watchStop)
-	return waitForWS(m.watchID, m.watchCh)
+	m.presence = nil
+	m.watchCh = m.cl.watchSession(id, 0, m.viewerName, m.watchStop)
+	return tea.Batch(waitForWS(m.watchID, m.watchCh), fetchPresenceCmd(m.cl, id))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		vpWidth := m.width - sidebarWidth - 4
-		if vpWidth < 10 {
-			vpWidth = 10
-		}
-		vpHeight := m.height - 4
-		if vpHeight < 3 {
-			vpHeight = 3
-		}
+		vpWidth := max(m.width-sidebarWidth-4, 10)
+		vpHeight := max(m.height-5, 3)
 		m.vp.Width, m.vp.Height = vpWidth, vpHeight
 		m.ready = true
 		m.vp.SetContent(m.renderMessages())
@@ -224,7 +239,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickRefresh()
 
 	case refreshTickMsg:
-		return m, fetchSessionsCmd(m.cl)
+		// The next tick is scheduled once fetchSessionsCmd's result comes back
+		// (see sessionsLoadedMsg below), so the loop keeps going without
+		// scheduling duplicate ticks here.
+		cmds := []tea.Cmd{fetchSessionsCmd(m.cl)}
+		if m.selectedIdx < len(m.sessions) {
+			cmds = append(cmds, fetchPresenceCmd(m.cl, m.sessions[m.selectedIdx].ID))
+		}
+		return m, tea.Batch(cmds...)
+
+	case presenceLoadedMsg:
+		if msg.err != nil || m.selectedIdx >= len(m.sessions) || msg.sessionID != m.sessions[m.selectedIdx].ID {
+			// Stale response for a session we've since switched away from.
+			return m, nil
+		}
+		m.presence = msg.presence
+		return m, nil
 
 	case inviteLoadedMsg:
 		if msg.err != nil {
@@ -233,6 +263,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.inviteText = msg.text
 		m.showInvite = true
+		if err := clipboard.WriteAll(msg.text); err != nil {
+			m.statusMsg = "invite shown (clipboard copy failed: " + err.Error() + ")"
+		} else {
+			m.statusMsg = "invite copied to clipboard"
+		}
 		return m, nil
 
 	case wsEventMsg:
@@ -264,9 +299,23 @@ func (m model) renderMessages() string {
 		}
 		roleTag := lipgloss.NewStyle().Foreground(color).Bold(true).Render(fmt.Sprintf("[%s]", msg.Author))
 		ts := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(msg.CreatedAt.Local().Format("15:04:05"))
-		b.WriteString(fmt.Sprintf("%s %s\n%s\n\n", ts, roleTag, msg.Content))
+		fmt.Fprintf(&b, "%s %s\n%s\n\n", ts, roleTag, msg.Content)
 	}
 	return b.String()
+}
+
+func (m model) renderPresence() string {
+	var active []string
+	for _, p := range m.presence {
+		if p.Active {
+			active = append(active, p.Author)
+		}
+	}
+	if len(active) == 0 {
+		return presenceDim.Render("active now: (none)")
+	}
+	return presenceStyle.Render("active now: "+strings.Join(active, ", ")) +
+		presenceDim.Render(fmt.Sprintf("  (%d)", len(active)))
 }
 
 func (m model) renderSidebar() string {
@@ -294,6 +343,7 @@ func (m model) View() string {
 	}
 
 	header := headerStyle.Width(m.width).Render(fmt.Sprintf("devchat viewer  -  %s", m.cl.apiBase))
+	presenceBar := lipgloss.NewStyle().Padding(0, 1).Render(m.renderPresence())
 
 	if m.showInvite {
 		box := lipgloss.NewStyle().
@@ -311,9 +361,9 @@ func (m model) View() string {
 	if m.err != nil {
 		status = "error: " + m.err.Error()
 	}
-	footer := footerStyle.Render(fmt.Sprintf("up/down: switch session   i: invite LLM   q: quit   %s", status))
+	footer := footerStyle.Render(fmt.Sprintf("up/down: switch session   i: copy invite   q: quit   %s", status))
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.renderSidebar(), m.vp.View())
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, presenceBar, body, footer)
 }

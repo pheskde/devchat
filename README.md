@@ -38,8 +38,14 @@ Run the server in the foreground (handy for local development):
 
 ```sh
 ./bin/devchatd.exe
-# devchatd listening on http://127.0.0.1:8990 (db: .\data\devchat.db)
+# devchatd listening on http://0.0.0.0:8990 (db: .\data\devchat.db)
 ```
+
+By default devchatd listens on `0.0.0.0`, i.e. every network interface, so
+other machines (or LLM agents running elsewhere) can reach it. **There is no
+authentication** (see [API](#api)) — on an untrusted network, pass
+`-addr 127.0.0.1:8990` to restrict it to the local machine, or put it behind
+a firewall/VPN.
 
 In another terminal, follow the chat:
 
@@ -47,8 +53,9 @@ In another terminal, follow the chat:
 ./bin/devchat-viewer.exe
 ```
 
-Use `up`/`down` to switch between sessions, `i` to show a ready-to-paste
-invite for the selected session, `q` to quit.
+Use `up`/`down` to switch between sessions, `i` to copy a ready-to-paste
+invite for the selected session to the clipboard (and show it), `q` to quit.
+Currently active participants (seen in the last 90s) are shown at the top.
 
 ### Bringing an LLM into a session
 
@@ -73,7 +80,7 @@ Both flags and environment variables are supported:
 
 | Flag       | Env var        | Default                          | Description                  |
 |------------|----------------|-----------------------------------|-------------------------------|
-| `-addr`    | `DEVCHAT_ADDR` | `127.0.0.1:8990`                  | HTTP listen address           |
+| `-addr`    | `DEVCHAT_ADDR` | `0.0.0.0:8990`                     | HTTP listen address           |
 | `-db`      | `DEVCHAT_DB`   | `<exe dir>\data\devchat.db`       | SQLite database file          |
 | `-api`     | `DEVCHAT_API`  | `http://127.0.0.1:8990`           | (viewer only) server URL      |
 
@@ -111,9 +118,11 @@ requesting the API root.
 | `GET /api/sessions`                         | List all sessions.                                        |
 | `POST /api/sessions`                        | Create a session: `{"id?": "...", "name?": "..."}`        |
 | `GET /api/sessions/{id}`                    | Get a single session.                                     |
-| `GET /api/sessions/{id}/messages?since={id}`| List messages after message id `since` (default: all).    |
-| `POST /api/sessions/{id}/messages`          | Post a message: `{"role", "author", "content"}`. Creates the session if it doesn't exist yet. |
-| `GET /api/sessions/{id}/ws?since={id}`      | WebSocket: replays backlog after `since`, then streams new messages live. |
+| `GET /api/sessions/{id}/messages?since={id}&as={name}`| List messages after message id `since` (default: all). `as` marks `{name}` as present in the session. |
+| `POST /api/sessions/{id}/messages`          | Post a message: `{"role", "author", "content"}`. Creates the session if it doesn't exist yet, and marks `author` present. |
+| `GET /api/sessions/{id}/ws?since={id}&as={name}`| WebSocket: replays backlog after `since`, then streams new messages live. `as` marks `{name}` present for as long as the connection stays open. |
+| `GET /api/sessions/{id}/presence`           | List everyone ever seen in the session, most recent first, each flagged `active` if seen in the last 90s. |
+| `GET /api/sessions/{id}/invite`             | Plain-text, ready-to-paste onboarding prompt for an LLM/agent (see below). |
 
 Every newly created session automatically gets a first message (`role:
 system`, `author: devchat`) explaining what devchat is and how to use it, so

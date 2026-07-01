@@ -62,23 +62,24 @@ func (c *client) getInvite(sessionID string) (string, error) {
 	return string(body), nil
 }
 
-func (c *client) listMessages(sessionID string, since int64) ([]store.Message, error) {
-	var msgs []store.Message
-	path := fmt.Sprintf("/api/sessions/%s/messages?since=%d&limit=500", url.PathEscape(sessionID), since)
-	if err := c.get(path, &msgs); err != nil {
+func (c *client) listPresence(sessionID string) ([]store.Presence, error) {
+	var presence []store.Presence
+	path := "/api/sessions/" + url.PathEscape(sessionID) + "/presence"
+	if err := c.get(path, &presence); err != nil {
 		return nil, err
 	}
-	return msgs, nil
+	return presence, nil
 }
 
 // watchSession opens a websocket to the given session and forwards every
 // message it receives on the returned channel until stop is closed. The
-// channel is closed when the connection ends.
-func (c *client) watchSession(sessionID string, since int64, stop <-chan struct{}) <-chan store.Message {
+// channel is closed when the connection ends. as, if non-empty, marks the
+// viewer as present in the session for as long as the connection stays up.
+func (c *client) watchSession(sessionID string, since int64, as string, stop <-chan struct{}) <-chan store.Message {
 	out := make(chan store.Message)
 
 	wsURL := strings.Replace(c.apiBase, "http", "ws", 1) +
-		fmt.Sprintf("/api/sessions/%s/ws?since=%d", url.PathEscape(sessionID), since)
+		fmt.Sprintf("/api/sessions/%s/ws?since=%d&as=%s", url.PathEscape(sessionID), since, url.QueryEscape(as))
 
 	go func() {
 		defer close(out)

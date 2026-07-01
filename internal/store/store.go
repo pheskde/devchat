@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS kv_store (
 	updated_at TEXT NOT NULL,
 	PRIMARY KEY (scope, key)
 );
+
+CREATE TABLE IF NOT EXISTS presence (
+	session_id TEXT NOT NULL,
+	author     TEXT NOT NULL,
+	last_seen  TEXT NOT NULL,
+	PRIMARY KEY (session_id, author)
+);
 `
 
 // Open opens (creating if necessary) the SQLite database at path and applies

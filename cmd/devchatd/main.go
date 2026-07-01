@@ -14,7 +14,7 @@ import (
 
 func main() {
 	fs := flag.NewFlagSet("devchatd", flag.ExitOnError)
-	addr := fs.String("addr", envOr("DEVCHAT_ADDR", "127.0.0.1:8990"), "listen address")
+	addr := fs.String("addr", envOr("DEVCHAT_ADDR", "0.0.0.0:8990"), "listen address")
 	dbPath := fs.String("db", envOr("DEVCHAT_DB", defaultDBPath()), "path to the sqlite database file")
 
 	// service.Control subcommands (install/uninstall/start/stop/restart) come

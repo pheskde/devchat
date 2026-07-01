@@ -12,10 +12,11 @@ import (
 
 func main() {
 	apiBase := flag.String("api", envOr("DEVCHAT_API", "http://127.0.0.1:8990"), "devchatd API base URL")
+	name := flag.String("name", envOr("DEVCHAT_NAME", "viewer"), "name shown to others while this viewer is connected")
 	flag.Parse()
 
 	cl := newClient(*apiBase)
-	p := tea.NewProgram(newModel(cl), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(cl, *name), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "devchat-viewer:", err)
 		os.Exit(1)
