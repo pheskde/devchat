@@ -40,6 +40,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	s.mux.HandleFunc("GET /api/sessions/{id}/invite", s.handleInvite)
 	s.mux.HandleFunc("GET /api/sessions/{id}/messages", s.handleListMessages)
 	s.mux.HandleFunc("POST /api/sessions/{id}/messages", s.handlePostMessage)
 	s.mux.HandleFunc("GET /api/sessions/{id}/ws", s.handleWS)

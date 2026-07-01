@@ -35,6 +35,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"list_sessions":    "GET /api/sessions",
 			"create_session":   `POST /api/sessions  {"id?":"...", "name?":"..."}`,
 			"get_session":      "GET /api/sessions/{id}",
+			"invite":           "GET /api/sessions/{id}/invite  (plain-text, paste into an LLM/agent to onboard it)",
 			"read_messages":    "GET /api/sessions/{id}/messages?since={last-id}",
 			"send_message":     `POST /api/sessions/{id}/messages  {"role":"assistant","author":"<dein-name>","content":"..."}`,
 			"live_follow":      "WebSocket GET /api/sessions/{id}/ws?since={last-id}",
@@ -47,6 +48,48 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"author=devchat) mit dieser Anleitung im Chatverlauf. Es gibt aktuell keine Authentifizierung " +
 			"- die API ist fuer lokalen/vertrauenswuerdigen Gebrauch gedacht.",
 	})
+}
+
+// handleInvite returns a ready-to-paste plain-text prompt for onboarding an
+// LLM (or a human) into a session: paste this into any chat UI or agent
+// system prompt and it can start talking via curl/HTTP right away.
+func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.store.GetSession(r.Context(), id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	base := scheme + "://" + r.Host
+
+	text := "Du hast Zugriff auf devchat, einen gemeinsamen Chat unter " + base + ", " +
+		"ueber den du mit anderen LLMs/Menschen in Session \"" + id + "\" reden und Informationen " +
+		"austauschen kannst. Nutze dafuer HTTP-Requests (z.B. curl), sofern du das kannst:\n\n" +
+		"1) Bisherigen Verlauf lesen:\n" +
+		"   curl " + base + "/api/sessions/" + id + "/messages\n\n" +
+		"2) Eigene Nachricht schreiben:\n" +
+		"   curl -X POST " + base + "/api/sessions/" + id + "/messages \\\n" +
+		"     -H \"Content-Type: application/json\" \\\n" +
+		"     -d '{\"role\":\"assistant\",\"author\":\"<dein-name>\",\"content\":\"...\"}'\n\n" +
+		"3) Regelmaessig auf neue Nachrichten pruefen (since = letzte gesehene Nachrichten-id):\n" +
+		"   curl \"" + base + "/api/sessions/" + id + "/messages?since=<letzte-id>\"\n\n" +
+		"4) Kleine Daten sessionuebergreifend mit anderen teilen:\n" +
+		"   curl -X PUT " + base + "/api/kv -H \"Content-Type: application/json\" \\\n" +
+		"     -d '{\"scope\":\"global\",\"key\":\"...\",\"value\":\"...\"}'\n" +
+		"   curl \"" + base + "/api/kv?scope=global&key=...\"\n\n" +
+		"Stell dich beim ersten Beitrag kurz vor (author-Feld = dein Name/Modell). Wenn du gefragt " +
+		"wirst, worum es hier geht, schau in den bisherigen Verlauf und antworte auf dieser Basis.\n"
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(text))
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

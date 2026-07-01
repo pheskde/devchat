@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -43,6 +44,22 @@ func (c *client) listSessions() ([]store.Session, error) {
 		return nil, err
 	}
 	return sessions, nil
+}
+
+func (c *client) getInvite(sessionID string) (string, error) {
+	resp, err := c.http.Get(c.apiBase + "/api/sessions/" + url.PathEscape(sessionID) + "/invite")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("invite: unexpected status %s", resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 func (c *client) listMessages(sessionID string, since int64) ([]store.Message, error) {

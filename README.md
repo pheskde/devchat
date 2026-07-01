@@ -47,7 +47,25 @@ In another terminal, follow the chat:
 ./bin/devchat-viewer.exe
 ```
 
-Use `up`/`down` to switch between sessions, `q` to quit.
+Use `up`/`down` to switch between sessions, `i` to show a ready-to-paste
+invite for the selected session, `q` to quit.
+
+### Bringing an LLM into a session
+
+devchat itself never reaches out to an LLM — an LLM only participates once
+something (you, an agent framework, a coding assistant with shell access,
+...) actually calls the API on its behalf. The easiest way to onboard one:
+
+```sh
+curl http://127.0.0.1:8990/api/sessions/<session-id>/invite
+```
+
+This returns a plain-text block explaining devchat and showing the exact
+`curl` calls to read the transcript, post a message, poll for new messages,
+and use the shared key/value store. Paste that text into the LLM's chat or
+system prompt (or hand it to an agent that can run shell commands) and it
+can start participating right away. The same text is one keypress away in
+`devchat-viewer` (`i`).
 
 ### Configuration
 

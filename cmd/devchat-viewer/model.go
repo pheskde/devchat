@@ -60,6 +60,11 @@ type wsEventMsg struct {
 
 type refreshTickMsg struct{}
 
+type inviteLoadedMsg struct {
+	text string
+	err  error
+}
+
 type model struct {
 	cl      *client
 	width   int
@@ -78,6 +83,9 @@ type model struct {
 
 	statusMsg string
 	err       error
+
+	showInvite bool
+	inviteText string
 }
 
 func newModel(cl *client) model {
@@ -96,6 +104,13 @@ func fetchSessionsCmd(cl *client) tea.Cmd {
 	return func() tea.Msg {
 		sessions, err := cl.listSessions()
 		return sessionsLoadedMsg{sessions: sessions, err: err}
+	}
+}
+
+func fetchInviteCmd(cl *client, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		text, err := cl.getInvite(sessionID)
+		return inviteLoadedMsg{text: text, err: err}
 	}
 }
 
@@ -139,12 +154,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.showInvite {
+			switch msg.String() {
+			case "ctrl+c", "q":
+				if m.watchStop != nil {
+					close(m.watchStop)
+				}
+				return m, tea.Quit
+			case "esc", "i":
+				m.showInvite = false
+				return m, nil
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+c", "q":
 			if m.watchStop != nil {
 				close(m.watchStop)
 			}
 			return m, tea.Quit
+		case "i":
+			if len(m.sessions) == 0 {
+				return m, nil
+			}
+			return m, fetchInviteCmd(m.cl, m.sessions[m.selectedIdx].ID)
 		case "up", "k":
 			if m.selectedIdx > 0 {
 				m.selectedIdx--
@@ -192,6 +225,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refreshTickMsg:
 		return m, fetchSessionsCmd(m.cl)
+
+	case inviteLoadedMsg:
+		if msg.err != nil {
+			m.statusMsg = "invite error: " + msg.err.Error()
+			return m, nil
+		}
+		m.inviteText = msg.text
+		m.showInvite = true
+		return m, nil
 
 	case wsEventMsg:
 		if msg.watchID != m.watchID {
@@ -253,11 +295,23 @@ func (m model) View() string {
 
 	header := headerStyle.Width(m.width).Render(fmt.Sprintf("devchat viewer  -  %s", m.cl.apiBase))
 
+	if m.showInvite {
+		box := lipgloss.NewStyle().
+			Width(m.width - 2).
+			Height(m.vp.Height).
+			Padding(1, 2).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("212")).
+			Render("Einladungstext zum Einfuegen in ein LLM/einen Agenten:\n\n" + m.inviteText)
+		footer := footerStyle.Render("esc/i: zurueck   q: quit")
+		return lipgloss.JoinVertical(lipgloss.Left, header, box, footer)
+	}
+
 	status := m.statusMsg
 	if m.err != nil {
 		status = "error: " + m.err.Error()
 	}
-	footer := footerStyle.Render(fmt.Sprintf("up/down: switch session   q: quit   %s", status))
+	footer := footerStyle.Render(fmt.Sprintf("up/down: switch session   i: invite LLM   q: quit   %s", status))
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.renderSidebar(), m.vp.View())
 
