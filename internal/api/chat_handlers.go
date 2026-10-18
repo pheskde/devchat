@@ -158,7 +158,17 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	msgs, err := s.store.ListMessages(r.Context(), id, since, limit)
+	var msgs []store.Message
+	var err error
+	if tail, _ := strconv.Atoi(r.URL.Query().Get("tail")); tail > 0 {
+		// tail=N: the last N messages (ignores since/limit), e.g. to find the newest id cheaply.
+		if tail > 5000 {
+			tail = 5000
+		}
+		msgs, err = s.store.TailMessages(r.Context(), id, tail)
+	} else {
+		msgs, err = s.store.ListMessages(r.Context(), id, since, limit)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

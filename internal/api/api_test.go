@@ -227,3 +227,34 @@ func TestImportKeepsIDsAndIsIdempotent(t *testing.T) {
 		t.Errorf("since=5 returned %+v", got)
 	}
 }
+
+// The "default" session's welcome message takes id 1 in a fresh database; importing a history that starts at
+// id 1 must still keep its ids (the welcome message is disposable).
+func TestImportReplacesWelcomeMessageOfOtherSession(t *testing.T) {
+	ts := newTestServer(t, testToken)
+	code, body := do(t, "POST", ts.URL+"/api/sessions/eloniq/import", testToken, map[string]any{"messages": []map[string]any{
+		{"id": 1, "role": "agent", "author": "A", "content": "first"},
+		{"id": 2, "role": "agent", "author": "B", "content": "second"}}})
+	if code != 200 {
+		t.Fatalf("import: %d %s", code, body)
+	}
+	_, body = do(t, "GET", ts.URL+"/api/sessions/eloniq/messages?since=0", testToken, nil)
+	var got []store.Message
+	json.Unmarshal(body, &got)
+	if len(got) != 2 || got[0].ID != 1 || got[0].Content != "first" {
+		t.Errorf("history = %+v", got)
+	}
+}
+
+func TestMessagesTail(t *testing.T) {
+	ts := newTestServer(t, testToken)
+	for i := 1; i <= 5; i++ {
+		do(t, "POST", ts.URL+"/api/sessions/eloniq/messages", testToken, map[string]any{"role": "agent", "author": "A", "content": strconv.Itoa(i)})
+	}
+	_, body := do(t, "GET", ts.URL+"/api/sessions/eloniq/messages?tail=2", testToken, nil)
+	var got []store.Message
+	json.Unmarshal(body, &got)
+	if len(got) != 2 || got[0].Content != "4" || got[1].Content != "5" {
+		t.Errorf("tail = %+v", got)
+	}
+}

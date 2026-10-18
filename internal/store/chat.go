@@ -168,6 +168,13 @@ func (s *Store) ImportMessages(ctx context.Context, sessionID string, msgs []Imp
 		if ts.IsZero() {
 			ts = time.Now()
 		}
+		// A system welcome message of another session (e.g. "default") may hold the id; it carries no
+		// information worth keeping, the imported history does.
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM messages WHERE id = ? AND session_id <> ? AND role = 'system' AND author = ?`,
+			m.ID, sessionID, WelcomeAuthor); err != nil {
+			return 0, fmt.Errorf("import message %d: %w", m.ID, err)
+		}
 		res, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO messages (id, session_id, role, author, content, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 			m.ID, sessionID, m.Role, m.Author, m.Content, ts.UTC().Format(timeLayout))
@@ -176,12 +183,45 @@ func (s *Store) ImportMessages(ctx context.Context, sessionID string, msgs []Imp
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			added++
+			continue
+		}
+		var owner string
+		if err := tx.QueryRowContext(ctx, `SELECT session_id FROM messages WHERE id = ?`, m.ID).Scan(&owner); err != nil {
+			return 0, fmt.Errorf("import message %d: %w", m.ID, err)
+		}
+		if owner != sessionID {
+			return 0, fmt.Errorf("import message %d: id already used by session %q", m.ID, owner)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("import: %w", err)
 	}
 	return added, nil
+}
+
+// TailMessages returns the last n messages of a session, oldest first.
+func (s *Store) TailMessages(ctx context.Context, sessionID string, n int) ([]Message, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, role, author, content, created_at FROM (
+		   SELECT id, session_id, role, author, content, created_at
+		   FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?
+		 ) ORDER BY id ASC`, sessionID, n)
+	if err != nil {
+		return nil, fmt.Errorf("tail messages: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Message{}
+	for rows.Next() {
+		var m Message
+		var created string
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Author, &m.Content, &created); err != nil {
+			return nil, fmt.Errorf("scan message: %w", err)
+		}
+		m.CreatedAt, _ = time.Parse(timeLayout, created)
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // ListMessages returns messages for a session with id > sinceID, oldest
