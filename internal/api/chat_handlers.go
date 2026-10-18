@@ -148,6 +148,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit > 5000 {
+		limit = 5000
+	}
 
 	if as := r.URL.Query().Get("as"); as != "" {
 		if err := s.store.TouchPresence(r.Context(), id, as); err != nil {
@@ -161,6 +164,24 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, msgs)
+}
+
+// handleImportMessages migrates an existing history, keeping the original
+// message ids. Repeating it is safe: known ids are skipped.
+func (s *Server) handleImportMessages(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Messages []store.ImportedMessage `json:"messages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	added, err := s.store.ImportMessages(r.Context(), r.PathValue("id"), req.Messages)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"added": added, "received": len(req.Messages)})
 }
 
 func (s *Server) handleListPresence(w http.ResponseWriter, r *http.Request) {

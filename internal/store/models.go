@@ -22,6 +22,8 @@ type KV struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// ExpiresAt is set for entries written with a TTL.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 const timeLayout = time.RFC3339Nano

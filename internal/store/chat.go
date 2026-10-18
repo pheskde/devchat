@@ -134,6 +134,56 @@ func (s *Store) insertMessage(ctx context.Context, sessionID, role, author, cont
 	}, nil
 }
 
+// ImportedMessage is a message with a caller-chosen id, used to migrate an
+// existing chat history without renumbering it.
+type ImportedMessage struct {
+	ID        int64     `json:"id"`
+	Role      string    `json:"role"`
+	Author    string    `json:"author"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ImportMessages inserts messages with their original ids into sessionID
+// (created without a welcome message if missing). Ids that already exist are
+// skipped, so the import can be repeated to pick up a delta. It returns the
+// number of newly inserted messages.
+func (s *Store) ImportMessages(ctx context.Context, sessionID string, msgs []ImportedMessage) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("import: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sessions (id, name, created_at) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+		sessionID, sessionID, time.Now().UTC().Format(timeLayout)); err != nil {
+		return 0, fmt.Errorf("import session: %w", err)
+	}
+	added := 0
+	for _, m := range msgs {
+		if m.ID <= 0 {
+			return 0, fmt.Errorf("import: message id must be > 0")
+		}
+		ts := m.CreatedAt
+		if ts.IsZero() {
+			ts = time.Now()
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO messages (id, session_id, role, author, content, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			m.ID, sessionID, m.Role, m.Author, m.Content, ts.UTC().Format(timeLayout))
+		if err != nil {
+			return 0, fmt.Errorf("import message %d: %w", m.ID, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("import: %w", err)
+	}
+	return added, nil
+}
+
 // ListMessages returns messages for a session with id > sinceID, oldest
 // first, capped at limit (0 = default 200).
 func (s *Store) ListMessages(ctx context.Context, sessionID string, sinceID int64, limit int) ([]Message, error) {

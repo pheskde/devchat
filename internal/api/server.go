@@ -15,24 +15,29 @@ type Server struct {
 	hub   *hub
 	log   *log.Logger
 	mux   *http.ServeMux
+	token string
 }
 
-func New(st *store.Store, logger *log.Logger) *Server {
+// New builds the API server. A non-empty token makes every endpoint except
+// the health probes require "Authorization: Bearer <token>".
+func New(st *store.Store, logger *log.Logger, token string) *Server {
 	s := &Server{
 		store: st,
 		hub:   newHub(),
 		log:   logger,
 		mux:   http.NewServeMux(),
+		token: token,
 	}
 	s.routes()
 	return s
 }
 
 func (s *Server) Handler() http.Handler {
-	return withLogging(s.log, s.mux)
+	return withLogging(s.log, requireToken(s.token, s.mux))
 }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /", s.handleInfo)
 	s.mux.HandleFunc("GET /api", s.handleInfo)
@@ -50,6 +55,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/kv", s.handlePutKV)
 	s.mux.HandleFunc("DELETE /api/kv", s.handleDeleteKV)
 	s.mux.HandleFunc("GET /api/kv/list", s.handleListKV)
+
+	s.mux.HandleFunc("POST /api/sessions/{id}/import", s.handleImportMessages)
 }
 
 func withLogging(logger *log.Logger, next http.Handler) http.Handler {

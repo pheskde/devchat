@@ -20,6 +20,7 @@ import (
 type program struct {
 	addr   string
 	dbPath string
+	token  string
 	logger *log.Logger
 
 	httpSrv *http.Server
@@ -41,7 +42,7 @@ func (p *program) run() {
 	}
 	p.st = st
 
-	apiSrv := api.New(st, p.logger)
+	apiSrv := api.New(st, p.logger, p.token)
 	p.httpSrv = &http.Server{
 		Addr:    p.addr,
 		Handler: apiSrv.Handler(),
@@ -53,7 +54,11 @@ func (p *program) run() {
 	}
 
 	p.logger.Printf("devchatd listening on http://%s (db: %s)", p.addr, p.dbPath)
-	p.logger.Printf("no authentication is configured - anyone able to reach this address can read/write the chat and kv store")
+	if p.token == "" {
+		p.logger.Printf("WARNING: no token configured - anyone able to reach this address can read/write the chat and kv store")
+	} else {
+		p.logger.Printf("bearer token authentication enabled")
+	}
 	if err := p.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		p.logger.Printf("http server error: %v", err)
 	}

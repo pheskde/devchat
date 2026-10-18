@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS kv_store (
 	key        TEXT NOT NULL,
 	value      TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
+	expires_at TEXT,
 	PRIMARY KEY (scope, key)
 );
 
@@ -64,12 +65,45 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 
+	if err := migrateKVExpiry(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate kv_store: %w", err)
+	}
+
 	s := &Store{db: db}
 	if err := s.EnsureSession(ctx, "default", "default"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ensure default session: %w", err)
 	}
 	return s, nil
+}
+
+// migrateKVExpiry adds the expires_at column to databases created before TTL
+// support existed.
+func migrateKVExpiry(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(kv_store)`)
+	if err != nil {
+		return err
+	}
+	has := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "expires_at" {
+			has = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || has {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `ALTER TABLE kv_store ADD COLUMN expires_at TEXT`)
+	return err
 }
 
 func (s *Store) Close() error {
